@@ -12,8 +12,48 @@ import {
   Sparkles,
   CloudLightning,
   ShieldCheck,
-  Lock
+  Lock,
+  Settings,
+  Phone,
+  Mail,
+  MapPin,
+  MessageCircle
 } from "lucide-react";
+
+interface SiteSettings {
+  phoneDisplay: string;
+  phoneIntl: string;
+  whatsapp: string;
+  email: string;
+  addressFr: string;
+  addressAr: string;
+}
+
+const EMPTY_SETTINGS: SiteSettings = {
+  phoneDisplay: "",
+  phoneIntl: "",
+  whatsapp: "",
+  email: "",
+  addressFr: "",
+  addressAr: "",
+};
+
+/** Normalize a Moroccan phone to international / whatsapp forms.
+ *  "0699251530" -> { phoneIntl: "+212699251530", whatsapp: "212699251530" } */
+function derivePhoneFormats(phoneDisplay: string, explicitWhatsapp?: string) {
+  const digits = phoneDisplay.replace(/\D/g, "");
+  let local = digits;
+  if (local.startsWith("212")) local = "0" + local.slice(3);
+  if (local && !local.startsWith("0")) local = "0" + local;
+  const intl = local.startsWith("0") ? "+212" + local.slice(1) : local;
+  const waDigits = (explicitWhatsapp || "").replace(/\D/g, "");
+  let whatsapp = waDigits;
+  if (!whatsapp) whatsapp = intl.replace(/\D/g, "");
+  else if (whatsapp.startsWith("0")) whatsapp = "212" + whatsapp.slice(1);
+  else if (whatsapp.startsWith("+")) whatsapp = whatsapp.slice(1);
+  if (whatsapp.startsWith("00")) whatsapp = whatsapp.slice(2);
+  return { phoneIntl: intl, whatsapp };
+}
 
 interface Project {
   id: string | number;
@@ -56,9 +96,11 @@ export default function AdminDashboard() {
   const [passwordInput, setPasswordInput] = useState("");
   const [authError, setAuthError] = useState("");
 
-  const [activeTab, setActiveTab] = useState<"products" | "projects">("products");
+  const [activeTab, setActiveTab] = useState<"products" | "projects" | "settings">("products");
   const [products, setProducts] = useState<Product[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [settings, setSettings] = useState<SiteSettings>(EMPTY_SETTINGS);
+  const [settingsForm, setSettingsForm] = useState<SiteSettings>(EMPTY_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -140,6 +182,13 @@ export default function AdminDashboard() {
       const projRes = await fetch("/api/sync?type=projects");
       const projData = await projRes.json();
       if (!projData.error) setProjects(projData);
+
+      const settingsRes = await fetch("/api/sync?type=settings");
+      const settingsData = await settingsRes.json();
+      if (!settingsData.error && settingsData.phoneDisplay !== undefined) {
+        setSettings(settingsData);
+        setSettingsForm(settingsData);
+      }
     } catch (error) {
       console.error("Git load error:", error);
     } finally {
@@ -167,7 +216,7 @@ export default function AdminDashboard() {
         body: formData,
       });
 
-      if (!res.ok) throw new Error("Upload failed. Verify Cloudinary API variables in Vercel.");
+      if (!res.ok) throw new Error("Upload failed.");
       
       const data = await res.json();
       setTempImageUrl(data.url);
@@ -211,7 +260,8 @@ export default function AdminDashboard() {
         });
 
         if (!res.ok) throw new Error();
-        setProducts(updatedProducts);
+        const json = await res.json();
+        setProducts(json.data);
       } else {
         let updatedProjects = [...projects];
         const payload = { ...projectForm, img: tempImageUrl };
@@ -232,18 +282,19 @@ export default function AdminDashboard() {
         });
 
         if (!res.ok) throw new Error();
-        setProjects(updatedProjects);
+        const json = await res.json();
+        setProjects(json.data);
       }
       resetForm();
     } catch (error) {
-      alert("GitHub sync failed. Check your GITHUB_TOKEN on Vercel.");
+      alert("Database sync failed. Check your DATABASE_URL on Vercel.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string | number) => {
-    if (!confirm("Are you sure? This will push a git commit.")) return;
+    if (!confirm("Are you sure? This will permanently delete this record.")) return;
     
     setSaving(true);
     try {
@@ -255,7 +306,8 @@ export default function AdminDashboard() {
           body: JSON.stringify({ type: "products", data: updatedProducts })
         });
         if (!res.ok) throw new Error();
-        setProducts(updatedProducts);
+        const json = await res.json();
+        setProducts(json.data);
       } else {
         const updatedProjects = projects.filter(p => p.id !== id);
         const res = await fetch("/api/sync", {
@@ -264,10 +316,52 @@ export default function AdminDashboard() {
           body: JSON.stringify({ type: "projects", data: updatedProjects })
         });
         if (!res.ok) throw new Error();
-        setProjects(updatedProjects);
+        const json = await res.json();
+        setProjects(json.data);
       }
     } catch (error) {
-      alert("GitHub Sync deletion failed.");
+      alert("Database deletion failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSettingsSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!settingsForm.phoneDisplay.trim()) {
+      alert("Veuillez saisir le numéro de téléphone.");
+      return;
+    }
+    if (!settingsForm.email.trim()) {
+      alert("Veuillez saisir l'adresse e-mail.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { phoneIntl, whatsapp } = derivePhoneFormats(
+        settingsForm.phoneDisplay,
+        settingsForm.whatsapp
+      );
+      const payload: SiteSettings = {
+        phoneDisplay: settingsForm.phoneDisplay.trim(),
+        phoneIntl,
+        whatsapp,
+        email: settingsForm.email.trim(),
+        addressFr: settingsForm.addressFr.trim(),
+        addressAr: settingsForm.addressAr.trim(),
+      };
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "settings", data: payload })
+      });
+      if (!res.ok) throw new Error();
+      const json = await res.json();
+      setSettings(json.data);
+      setSettingsForm(json.data);
+      alert("Coordonnées mises à jour.");
+    } catch (error) {
+      alert("Database sync failed. Check your DATABASE_URL on Vercel.");
     } finally {
       setSaving(false);
     }
@@ -415,6 +509,20 @@ export default function AdminDashboard() {
                 {projects.length}
               </span>
             </button>
+
+            <button
+              disabled={saving}
+              onClick={() => { setActiveTab("settings"); resetForm(); }}
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-semibold tracking-wider uppercase transition-all duration-300 ${activeTab === "settings" ? "bg-[#C5A028] text-[#0A0B0D] shadow-lg" : "text-gray-400 hover:bg-[#1B1E24] hover:text-white"}`}
+            >
+              <div className="flex items-center gap-3">
+                <Settings size={15} />
+                <span>Coordonnées</span>
+              </div>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${activeTab === "settings" ? "bg-black/10 text-black" : "bg-black/40 text-gray-400"}`}>
+                Site
+              </span>
+            </button>
           </nav>
         </div>
 
@@ -422,9 +530,9 @@ export default function AdminDashboard() {
           <div className="flex items-center justify-between text-[11px] text-gray-400 bg-black/25 p-3 rounded-lg border border-[#1B1E24]">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-              <span>Git Engine</span>
+              <span>DB Engine</span>
             </div>
-            <strong className="text-[#C5A028] font-bold">GitHub REST</strong>
+            <strong className="text-[#C5A028] font-bold">MySQL / Prisma</strong>
           </div>
           
           <button 
@@ -445,10 +553,11 @@ export default function AdminDashboard() {
               <Sparkles size={14} />
               <span className="text-[10px] uppercase tracking-widest font-semibold">Prestige Studio</span>
             </div>
-            <h2 className="text-3xl font-extrabold tracking-tight text-white capitalize">{activeTab} Manager</h2>
-            <p className="text-xs text-gray-400 mt-1">Direct GitHub synchronization. Commits will auto-deploy the live site.</p>
+            <h2 className="text-3xl font-extrabold tracking-tight text-white capitalize">{activeTab === "settings" ? "Coordonnées" : `${activeTab} Manager`}</h2>
+            <p className="text-xs text-gray-400 mt-1">{activeTab === "settings" ? "Téléphone, WhatsApp, e-mail et adresse affichés sur le site live (footers, boutons flottants, page contact)." : "Direct database synchronization via Prisma / MySQL."}</p>
           </div>
           
+          {activeTab !== "settings" && (
           <button 
             disabled={saving}
             onClick={() => { resetForm(); setIsModalOpen(true); }}
@@ -457,12 +566,13 @@ export default function AdminDashboard() {
             <Plus size={15} />
             Ajouter {activeTab === "products" ? "Produit" : "Projet"}
           </button>
+          )}
         </header>
 
         {saving && (
           <div className="mb-6 p-4 rounded-xl bg-blue-950/10 border border-blue-900/30 text-blue-400 text-xs flex items-center gap-2.5">
             <Loader2 className="animate-spin" size={14} />
-            Commiting modifications directly to GitHub and initiating automated deploy pipelines...
+            Saving modifications directly to the database...
           </div>
         )}
 
@@ -470,6 +580,101 @@ export default function AdminDashboard() {
           <div className="flex justify-center items-center py-20">
             <Loader2 className="animate-spin text-[#C5A028]" size={36} />
           </div>
+        ) : activeTab === "settings" ? (
+          <form onSubmit={handleSettingsSave} className="max-w-2xl bg-[#111317] border border-[#1B1E24] rounded-2xl p-6 md:p-8 space-y-5 shadow-lg">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Ces informations apparaissent partout sur le site : pieds de page, boutons WhatsApp / Appel flottants, page contact et référencement Google. Enregistrer met à jour la base de données.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label className="flex items-center gap-2 text-[10px] text-gray-400 mb-1.5 font-bold uppercase tracking-wider"><Phone size={12} className="text-[#C5A028]" /> Téléphone (affiché)</label>
+                <input
+                  type="text"
+                  required
+                  value={settingsForm.phoneDisplay}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, phoneDisplay: e.target.value })}
+                  className="w-full bg-[#1B1E24] border border-[#21242A] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#C5A028] transition duration-300"
+                  placeholder="ex. 0699251530"
+                  dir="ltr"
+                />
+                <p className="text-[10px] text-gray-500 mt-1.5">Utilisé pour les liens tel: et les footers.</p>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-[10px] text-gray-400 mb-1.5 font-bold uppercase tracking-wider"><MessageCircle size={12} className="text-[#C5A028]" /> WhatsApp</label>
+                <input
+                  type="text"
+                  value={settingsForm.whatsapp}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })}
+                  className="w-full bg-[#1B1E24] border border-[#21242A] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#C5A028] transition duration-300"
+                  placeholder="ex. 212699251530 (vide = auto)"
+                  dir="ltr"
+                />
+                <p className="text-[10px] text-gray-500 mt-1.5">Laissez vide pour utiliser le même numéro. Format international sans +.</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 text-[10px] text-gray-400 mb-1.5 font-bold uppercase tracking-wider"><Mail size={12} className="text-[#C5A028]" /> E-mail</label>
+              <input
+                type="email"
+                required
+                value={settingsForm.email}
+                onChange={(e) => setSettingsForm({ ...settingsForm, email: e.target.value })}
+                className="w-full bg-[#1B1E24] border border-[#21242A] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#C5A028] transition duration-300"
+                placeholder="ex. novastonetrav@gmail.com"
+                dir="ltr"
+              />
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 text-[10px] text-gray-400 mb-1.5 font-bold uppercase tracking-wider"><MapPin size={12} className="text-[#C5A028]" /> Adresse (Français)</label>
+              <input
+                type="text"
+                value={settingsForm.addressFr}
+                onChange={(e) => setSettingsForm({ ...settingsForm, addressFr: e.target.value })}
+                className="w-full bg-[#1B1E24] border border-[#21242A] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#C5A028] transition duration-300"
+                placeholder="ex. 2 AV KASSOU MEDDAH IMM BEN OSMAN Taza"
+              />
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 text-[10px] text-gray-400 mb-1.5 font-bold uppercase tracking-wider"><MapPin size={12} className="text-[#C5A028]" /> Adresse (العربية)</label>
+              <input
+                type="text"
+                dir="rtl"
+                value={settingsForm.addressAr}
+                onChange={(e) => setSettingsForm({ ...settingsForm, addressAr: e.target.value })}
+                className="w-full bg-[#1B1E24] border border-[#21242A] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#C5A028] transition duration-300 text-right"
+                placeholder="مثال: شارع قسو مداح, بن عثمان عمارة 2 - تازة"
+              />
+            </div>
+
+            <div className="bg-black/25 border border-[#1B1E24] rounded-xl p-4 text-[11px] text-gray-400 space-y-1.5">
+              <div>Aperçu appel : <span className="text-[#E5C158] font-semibold" dir="ltr">tel:{settingsForm.phoneDisplay || "…"}</span></div>
+              <div>Aperçu WhatsApp : <span className="text-[#E5C158] font-semibold" dir="ltr">wa.me/{derivePhoneFormats(settingsForm.phoneDisplay, settingsForm.whatsapp).whatsapp || "…"}</span></div>
+              <div>Aperçu SEO : <span className="text-[#E5C158] font-semibold" dir="ltr">{derivePhoneFormats(settingsForm.phoneDisplay, settingsForm.whatsapp).phoneIntl || "…"}</span></div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setSettingsForm(settings)}
+                className="flex-1 py-3 rounded-xl bg-[#1B1E24] hover:bg-[#262B34] text-xs font-bold uppercase tracking-wider text-gray-300 transition duration-300 disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 py-3 rounded-xl bg-[#C5A028] hover:bg-[#D4AF37] text-black font-bold text-xs uppercase tracking-wider transition duration-300 shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {saving && <Loader2 className="animate-spin" size={14} />}
+                Enregistrer
+              </button>
+            </div>
+          </form>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
             
@@ -577,13 +782,13 @@ export default function AdminDashboard() {
           <div className="flex flex-wrap gap-4">
             <div className="flex items-center gap-2 px-4 py-2 bg-[#1B1E24] border border-[#262B34] rounded-xl text-xs">
               <CloudLightning className="text-[#C5A028]" size={14} />
-              <span className="text-gray-300">Cloudinary API:</span>
-              <strong className="text-emerald-500">Active (Secure Server-Signed)</strong>
+              <span className="text-gray-300">Media Storage:</span>
+              <strong className="text-emerald-500">Active (MySQL / Prisma)</strong>
             </div>
             <div className="flex items-center gap-2 px-4 py-2 bg-[#1B1E24] border border-[#262B34] rounded-xl text-xs">
               <ShieldCheck className="text-[#C5A028]" size={14} />
-              <span className="text-gray-300">Repository Sync:</span>
-              <strong className="text-emerald-500">Active (GitHub REST)</strong>
+              <span className="text-gray-300">Database Sync:</span>
+              <strong className="text-emerald-500">Active (MySQL / Prisma)</strong>
             </div>
           </div>
         </section>
@@ -607,7 +812,7 @@ export default function AdminDashboard() {
             <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-5">
               
               <div>
-                <label className="block text-[10px] text-gray-400 mb-2.5 font-bold uppercase tracking-wider">Image / Rendu (Cloudinary)</label>
+                <label className="block text-[10px] text-gray-400 mb-2.5 font-bold uppercase tracking-wider">Image / Rendu</label>
                 {tempImageUrl ? (
                   <div className="relative aspect-video rounded-xl overflow-hidden border border-[#1B1E24] bg-black/40">
                     <img src={tempImageUrl} className="w-full h-full object-cover" alt="preview" />

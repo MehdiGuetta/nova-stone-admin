@@ -1,0 +1,78 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Product {
+  id           String           @id @default(cuid())
+  slug         String           @unique
+  category     String
+  name         String
+  nameAr       String
+  nameEn       String
+  desc         String?          @db.Text
+  descAr       String?          @db.Text
+  descEn       String?          @db.Text
+  img          String
+  isBestSeller Boolean          @default(false)
+  variants     ProductVariant[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  name      String
+  nameAr    String
+  nameEn    String
+  img       String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+
+  @@index([productId])
+}
+
+model Project {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  category   String
+  title      String
+  titleAr    String?
+  titleEn    String?
+  material   String
+  materialAr String?
+  materialEn String?
+  desc       String   @db.Text
+  descAr     String?  @db.Text
+  descEn     String?  @db.Text
+  img        String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Binary image storage, served back out through /api/assets/:id.
+model Asset {
+  id        String   @id @default(cuid())
+  data      Bytes    @db.LongBlob
+  mimeType  String
+  createdAt DateTime @default(now())
+}
+
+// Singleton row (id always 1) holding the site-wide contact settings.
+model SiteSettings {
+  id           Int      @id @default(autoincrement())
+  phoneDisplay String   @default("")
+  phoneIntl    String   @default("")
+  whatsapp     String   @default("")
+  email        String   @default("")
+  addressFr    String   @default("")
+  addressAr    String   @default("")
+  updatedAt    DateTime @updatedAt
+}
